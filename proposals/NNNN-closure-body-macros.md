@@ -1,12 +1,12 @@
 # Closure Body Macros
 
 * Proposal: [SE-NNNN](NNNN-closure-body-macros.md)
-* Authors: [Holly Borla](https://github.com/hborla)
+* Authors: [Holly Borla](https://github.com/hborla), [Hamish Knight](https://github.com/hamishknight)
 * Review Manager: TBD
 * Status: **Awaiting review**
 * Implementation: [swiftlang/swift#79980](https://github.com/swiftlang/swift/pull/79980), [swiftlang/swift-syntax#3016](https://github.com/swiftlang/swift-syntax/pull/3016)
 * Previous Proposal: [SE-0415: Function Body Macros][SE-0415]
-* Review: ([pitch](https://forums.swift.org/...))
+* Review: [pre-pitch](https://forums.swift.org/t/pre-pitch-closure-body-macros/78534), ([pitch](https://forums.swift.org/...))
 
 ## Introduction
 
@@ -46,7 +46,7 @@ This `@AssumeMainActor` macro would also be applicable to closures that are not 
 
 ## Proposed solution
 
-I propose allowing body macros to apply to closures. For example, the `@AssumeMainActor` body macro can be written on a closure in the closure signature:
+We propose allowing body macros to apply to closures. For example, the `@AssumeMainActor` body macro can be written on a closure in the closure signature:
 
 ```swift
 acceptClosure { @AssumeMainActor in
@@ -126,7 +126,7 @@ f(0) { z in
 
 In the above example, and the type of `z` is not known until the the overload for `f` is fully resolved.
 
-Because macro argument types can influence macro resolution, closure body macro attributes are type checked together with the enclosing expression. However, closure body macro expansions are type checked separately. Like freestanding expression macros, the macro attribute can be resolved multiple times during overload resolution, but the macro is not expanded until after a final solution has been found. This allows closure body macro attributes to freely use values from the surrounding context without restrictions on their types, while still maintaining the property that body macros are only expanded once.
+Because macro argument types can influence macro resolution, closure body macro attributes are type checked together with the enclosing expression. However, like function body macros, the body is not type-checked prior to expansion, the body is type-checked separately as part of the expansion. Like freestanding expression macros, the macro attribute can be resolved multiple times during overload resolution, but the macro is not expanded until after a final solution has been found. This allows closure body macro attributes to freely use values from the surrounding context without restrictions on their types, while still maintaining the property that body macros are only expanded once.
 
 #### Parameter and result type inference
 
@@ -183,7 +183,44 @@ Button(label: ...) {
 
 ## Alternatives considered
 
-### Restricting closure body macro arguments to literals
+### Spelling attribute before closure
+
+An alternative spelling for closure body macros would be to place the attribute before the closure (as was suggested in [SE-0415]):
+
+```swift
+@Traced(z) { (x, y) in
+  x + y
+}
+```
+
+We decided against this for two main reasons:
+- It's inconsistent with existing attributes in closures, e.g global actors.
+- It makes the syntax awkward for trailing closures.
+
+### Single requirement for closure and function body for macro implementation
+
+Rather than introducing a separate protocol requirement for the expansion of a closure body macro, we could introduce a singular requirement for handling body expansion for both a closure and function-like declaration. This would come at the expense of making it more awkward to query information from the attached node, since the only commonality between these cases would be the function body. We feel that implementing separate requirements isn't much of a burden, and ensures that macro authors consider how their body macro will apply to closures.
+
+### Allowing body macro inference from function parameter
+
+Similar to result builders, we could allow inference of the closure body macro when passing to a function, e.g:
+
+```swift
+func doWork(@AssumeMainActor completion: () -> Void) {
+  // ...
+}
+doWork {
+  // ...
+}
+```
+
+However unlike result builders, closure body macros can perform arbitrary code transforms. As such we feel it's important to always explicitly spell the macro to make it clear that the code as-written may significantly differ from the expanded code.
+
+### Type-checking behavior
+
+There are several alterative methods to type-checking a closure body macro that we considered, but decided to reject in favor of the proposed behavior, these are listed below.
+
+#### Restricting closure body macro arguments to literals
 
 A straightforward solution to the macro argument type checking problem is to simply restrict macro arguments to literal values, because type checking literals cannot be impacted by the surrounding local context. However, this approach is too restrictive for the uses cases of function body macros on closures. For example, an `@Task` macro might need the ability to specify an actor value to enqueue the task on in the case where the programmer does not want the default actor isolation inference from context, or the ability to specify a task executor preference:
 
@@ -197,7 +234,7 @@ acceptClosure { @Task(executorPreference: myExecutor) in
 }
 ```
 
-### Type check macro arguments outside of the expression context
+#### Type check macro arguments outside of the expression context
 
 Another solution to the macro argument type checking problem is to type check the macro arguments as if they were written outside of the expression. Instead, the macro would be type checked within the context of the innermost enclosing declaration. This is an attractive option due to its simplicity, but it may cause confusion if variables are shadowed within the expression, because a variable reference in the macro attribute that is copied to the expansion might resolve to difference variables in the attribute versus the expansion. For example:
 
@@ -215,7 +252,7 @@ func shadow(a: Int) {
 
 When resolving `@MyMacro(a)`, `a` would have type `Int`, but if `a` is used in the macro expansion, it would have type `String`.
 
-### Delay type checking of closure body macro arguments
+#### Delay type checking of closure body macro arguments
 
 A previous iteration of this proposal delayed type checking arguments to closure body macro attributes.
 
@@ -253,7 +290,7 @@ Type checking a closure body macro proceeds as follows:
 
 This approach preserves the property that body macros are expanded only once without sacrificing too much expressivity in macro attributes. However, it imposes really strange type inference limitations, and nothing else in the language uses a type inference strategy like this.
 
-### Expanding closure body macros during overload resolution
+#### Expanding closure body macros during overload resolution
 
 Another approach to the macro argument type checking problem is delaying resolving a closure body macro until the structure of the closure is known during overload resolution. This approach has the following tradeoffs:
 
